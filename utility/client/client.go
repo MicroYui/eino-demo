@@ -4,6 +4,7 @@ import (
 	"SuperBizAgent/utility/common"
 	"context"
 	"fmt"
+	"strings"
 
 	cli "github.com/milvus-io/milvus-sdk-go/v2/client"
 	"github.com/milvus-io/milvus-sdk-go/v2/entity"
@@ -106,7 +107,25 @@ func NewMilvusClient(ctx context.Context) (cli.Client, error) {
 	// 关闭default数据库连接
 	defaultClient.Close()
 
+	// Milvus 在已加载状态下再次 LoadCollection 不会刷新 load_fields，
+	// 先释放再按字段重载，避免检索阶段拿不到 content/metadata。
+	if err := agentClient.ReleaseCollection(ctx, common.MilvusCollectionName); err != nil && !isCollectionNotLoadedError(err) {
+		return nil, fmt.Errorf("failed to release biz collection: %w", err)
+	}
+	if err := agentClient.LoadCollection(ctx, common.MilvusCollectionName, false,
+		cli.WithLoadFields("id", "vector", "content", "metadata"),
+	); err != nil {
+		return nil, fmt.Errorf("failed to load biz collection with fields: %w", err)
+	}
+
 	return agentClient, nil
+}
+
+func isCollectionNotLoadedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "collection not loaded")
 }
 
 var fields = []*entity.Field{

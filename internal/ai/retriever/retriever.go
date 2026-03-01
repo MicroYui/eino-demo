@@ -5,12 +5,14 @@ import (
 	"SuperBizAgent/utility/client"
 	"SuperBizAgent/utility/common"
 	"context"
+	"strings"
 
 	"github.com/cloudwego/eino-ext/components/retriever/milvus"
-	"github.com/cloudwego/eino/components/retriever"
+	einoRetriever "github.com/cloudwego/eino/components/retriever"
+	"github.com/cloudwego/eino/schema"
 )
 
-func NewMilvusRetriever(ctx context.Context) (rtr retriever.Retriever, err error) {
+func NewMilvusRetriever(ctx context.Context) (rtr einoRetriever.Retriever, err error) {
 	cli, err := client.NewMilvusClient(ctx)
 	if err != nil {
 		return nil, err
@@ -34,5 +36,29 @@ func NewMilvusRetriever(ctx context.Context) (rtr retriever.Retriever, err error
 	if err != nil {
 		return nil, err
 	}
-	return r, nil
+	return &tolerantRetriever{inner: r}, nil
+}
+
+type tolerantRetriever struct {
+	inner einoRetriever.Retriever
+}
+
+func (t *tolerantRetriever) Retrieve(ctx context.Context, query string, opts ...einoRetriever.Option) ([]*schema.Document, error) {
+	docs, err := t.inner.Retrieve(ctx, query, opts...)
+	if err == nil {
+		return docs, nil
+	}
+	if shouldFallbackToEmptyDocs(err) {
+		return []*schema.Document{}, nil
+	}
+	return nil, err
+}
+
+func shouldFallbackToEmptyDocs(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "extra output fields") &&
+		strings.Contains(msg, "does not dynamic field")
 }
